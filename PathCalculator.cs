@@ -1,4 +1,5 @@
-﻿///Alessio Pagano, 03 July 2020
+﻿///Alessio Pagano, 22 September 2020
+///Contact me for any inconvenience: axmaxstudios@gmail.com
 ///Area of Movement for Turn Based Strategic in a gridless map
 
 using System.Collections;
@@ -9,102 +10,67 @@ using System.Linq;
 
 public class PathCalculator : MonoBehaviour
 {
-     RaycastHit hitInfo;
+    static bool isAlive = false;
+
+    RaycastHit hitInfo;
     NavMeshPath virtualPath;
     internal WorldCharacter controlledCharacter;
     public NavMeshAgent controlledAgent;
-    //public float maxDistance = 1;
-    // public float stillDistanceThreeshold = 0.5f;
+
+    //Controls the number of raycast used for precision, around 25 is a good amount, values higher than 50 may cause slower calculation
     public int radiusSlices = 12;
+
+    //meter value used to analyze obstacles or unreachable areas, lower means more precise but also slower. I suggest 0.25 or 0.5
     public float pathBoundariesPrecision = 0.5f;
+
     bool isDestinationReachable = false;
+    
+    //change this value to widen the area circle
     public float movementPoints;
+    
     Vector3 lastPosition;
     bool wasMovingBefore = false;
     IInteractable pendingInteraction = null;
     bool isInteracting = false;
-    static bool isAlive = false;
-
-    
 
     void Start()
     {
         virtualPath = new NavMeshPath();
-    }
-
-    internal static void Setup() {
         isAlive = true;
     }
-    // Update is called once per frame
-    void Update()
+
+//FOR DEBUG ONLY, Use mouse click to set the destination of the designed navmesh agent
+void Update()
     {
-        if (!GameManager.IsInteracting)
-        {
-            bool isPointingSomething = isAlive && IsCharacterStill() && Physics.Raycast(Camera.main.ScreenPointToRay(Input.mousePosition), out hitInfo);
+        
+            bool isPointingSomething = isAlive && Physics.Raycast(Camera.main.ScreenPointToRay(Input.mousePosition), out hitInfo);
 
             if (isPointingSomething)
             {
                 float distanceToTravel = GetPathDistance(virtualPath);
                 isDestinationReachable = IsPointOnNavMesh(hitInfo.point, virtualPath) && distanceToTravel <= movementPoints;
 
-
                 IInteractable interactable = hitInfo.transform.GetComponent<IInteractable>();
-                
-                //print(isDestinationReachable);
 
                 if (isDestinationReachable && Input.GetMouseButtonDown(0))
                 {
                     MoveCharacter(virtualPath, distanceToTravel);
 
-                    if (interactable != null)
-                    {
-                        SetPendingInteraction(interactable);
-                    }
                 }
-
-                if (pendingInteraction == null)
-                {
-                    if (isDestinationReachable && interactable != null)
-                    {
-                        CursorManager.SetCursorImage(CursorEnum.INTERACT);
-                    }
-                    else
-                    {
-
-                        CursorManager.SetCursorImage(!isDestinationReachable);
-
-                    }
-                }
-
             }
-        }
-
-
-        void SetPendingInteraction(IInteractable interaction)
-        {
-            pendingInteraction = interaction;
-        }
-
-        void MoveCharacter(NavMeshPath virtualPath, float distance)
-        {
-            controlledAgent.SetPath(virtualPath);
-            movementPoints -= distance;
-
-        }
-
-        //if (Input.GetKeyDown(KeyCode.Space))
-        //{
-        //    CalculateBoundaries(radiusSlices);
-
-        //}
-
     }
 
+    void MoveCharacter(NavMeshPath virtualPath, float distance)
+    {
+        controlledAgent.SetPath(virtualPath);
+        movementPoints -= distance;
+    }
+    
     public RaycastHit GetRaycastHit()
     {
         return hitInfo;
     }
-
+    
     public bool IsPointOnNavMesh(Vector3 virtualDestination, NavMeshPath outPath)
     {
         return controlledAgent.CalculatePath(virtualDestination, outPath);
@@ -127,42 +93,17 @@ public class PathCalculator : MonoBehaviour
             waypoints.Add(v);
         }
 
-
         for (int i = 0; i < waypoints.Count - 1; i++)
         {
 
             float partial = Vector3.Distance(waypoints[i], waypoints[i + 1]);
             totalLength += partial;
-
         }
 
-        //RadiusDrawer.SetLinePoints(waypoints.ToArray());
         return totalLength;
-
     }
 
-    bool IsCharacterStill()
-    {
-
-        Vector3 characterPosition = controlledAgent.transform.position;
-
-        if (wasMovingBefore && characterPosition == lastPosition && controlledAgent.velocity.magnitude < 0.1f)
-        {
-            wasMovingBefore = false;
-            OnBecomeStill();
-        }
-        else if (!wasMovingBefore && characterPosition != lastPosition && controlledAgent.velocity.magnitude > 0.1f)
-        {
-            wasMovingBefore = true;
-            OnStartMoving();
-        }
-
-        bool isStill = lastPosition == characterPosition;
-
-        lastPosition = characterPosition;
-        return isStill;
-    }
-    
+//Main calculations here
     private void CalculateBoundaries(int subdivisions)
     {
         List<Vector3> waypoints = new List<Vector3>();
@@ -193,32 +134,12 @@ public class PathCalculator : MonoBehaviour
         RadiusDrawer.SetLinePoints(waypoints.ToArray());
     }
 
+
     Vector3 GetPointOnRadiusCorrected(float angle, float maxDistance)
-     {
-         Vector3 circlePoint = new Vector3(Mathf.Sin(Mathf.Deg2Rad * angle), 0, Mathf.Cos(Mathf.Deg2Rad * angle));
+    {
+        Vector3 circlePoint = new Vector3(Mathf.Sin(Mathf.Deg2Rad * angle), 0, Mathf.Cos(Mathf.Deg2Rad * angle));
         Vector3 finalPoint = (circlePoint * maxDistance);
-         return finalPoint;
-     }
-     
-    void OnStartMoving()
-    {
-        CameraManager.TrackTarget(controlledAgent.transform);
-    }
-
-    void OnBecomeStill()
-    {
-
-
-        if (pendingInteraction != null)
-        {
-            ExecuteInteraction();
-        }
-        else
-        {
-            CalculateMovementPoints();
-        }
-        CameraManager.StopTracking();
-
+        return finalPoint;
     }
 
     internal void CalculateMovementPoints()
@@ -233,5 +154,4 @@ public class PathCalculator : MonoBehaviour
             CalculateBoundaries(radiusSlices);
         }
     }
-
 }
