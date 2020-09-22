@@ -9,82 +9,119 @@ using System.Linq;
 
 public class PathCalculator : MonoBehaviour
 {
-    public static PlayerController instance;
-    RaycastHit hitInfo;
+     RaycastHit hitInfo;
     NavMeshPath virtualPath;
-    public NavMeshAgent controlledCharacter;
-
-    //max distance a path could be navigated to
-    public float maxDistance = 5;
-
-    //subdivisions of the circle, Higher values is more precise but less efficient, 25 is a compromise value
+    internal WorldCharacter controlledCharacter;
+    public NavMeshAgent controlledAgent;
+    //public float maxDistance = 1;
+    // public float stillDistanceThreeshold = 0.5f;
     public int radiusSlices = 12;
-
-    //value to calculate cavities, lower values result in a more precise calculation
     public float pathBoundariesPrecision = 0.5f;
     bool isDestinationReachable = false;
     public float movementPoints;
     Vector3 lastPosition;
     bool wasMovingBefore = false;
-    GameManager gameManager;
+    IInteractable pendingInteraction = null;
+    bool isInteracting = false;
+    static bool isAlive = false;
 
-    private void Awake()
-    {
-        instance = this;
-    }
+    
 
-    //Initialization
     void Start()
     {
-        //navmesh path used for calculations
         virtualPath = new NavMeshPath();
-        controlledCharacter.SetDestination(controlledCharacter.transform.position);
-        movementPoints = maxDistance;
     }
 
-    //
+    internal static void Setup() {
+        isAlive = true;
+    }
+    // Update is called once per frame
     void Update()
     {
-
-        //Tries to get the mouse raycast on map as a candidate to move agent
-        bool isPointingSomething = IsCharacterStill() && Physics.Raycast(Camera.main.ScreenPointToRay(Input.mousePosition), out hitInfo);
-
-        if (isPointingSomething)
-        //check if path is inside max distance and actually on the navmesh baked area
+        if (!GameManager.IsInteracting)
         {
-            float distanceToTravel = GetPathDistance(virtualPath);
-            isDestinationReachable = IsPathOnNavMesh(hitInfo.point, virtualPath) && distanceToTravel <= maxDistance;
-            
-            //if the point is actually on a navmesh area and in range and Left mouse button is clicked
-            if (isDestinationReachable && Input.GetMouseButtonDown(0))
-            {
-                //set the path directly to the agent
+            bool isPointingSomething = isAlive && IsCharacterStill() && Physics.Raycast(Camera.main.ScreenPointToRay(Input.mousePosition), out hitInfo);
 
-                controlledCharacter.SetPath(virtualPath);
+            if (isPointingSomething)
+            {
+                float distanceToTravel = GetPathDistance(virtualPath);
+                isDestinationReachable = IsPointOnNavMesh(hitInfo.point, virtualPath) && distanceToTravel <= movementPoints;
+
+
+                IInteractable interactable = hitInfo.transform.GetComponent<IInteractable>();
+                
+                //print(isDestinationReachable);
+
+                if (isDestinationReachable && Input.GetMouseButtonDown(0))
+                {
+                    MoveCharacter(virtualPath, distanceToTravel);
+
+                    if (interactable != null)
+                    {
+                        SetPendingInteraction(interactable);
+                    }
+                }
+
+                if (pendingInteraction == null)
+                {
+                    if (isDestinationReachable && interactable != null)
+                    {
+                        CursorManager.SetCursorImage(CursorEnum.INTERACT);
+                    }
+                    else
+                    {
+
+                        CursorManager.SetCursorImage(!isDestinationReachable);
+
+                    }
+                }
+
             }
         }
 
-        //DEBUG Press SPACE to start the render of the area
-        if (Input.GetKeyDown(KeyCode.Space))
+
+        void SetPendingInteraction(IInteractable interaction)
         {
-            CalculateBoundaries(radiusSlices);
+            pendingInteraction = interaction;
+        }
+
+        void MoveCharacter(NavMeshPath virtualPath, float distance)
+        {
+            controlledAgent.SetPath(virtualPath);
+            movementPoints -= distance;
 
         }
+
+        //if (Input.GetKeyDown(KeyCode.Space))
+        //{
+        //    CalculateBoundaries(radiusSlices);
+
+        //}
+
     }
 
-    //Checks if on a correctly baked navmesh or on obstacle
-    bool IsPathOnNavMesh(Vector3 virtualDestination, NavMeshPath outPath)
+    public RaycastHit GetRaycastHit()
     {
-        return controlledCharacter.CalculatePath(virtualDestination, outPath);
+        return hitInfo;
     }
 
-    //This Method returns the sum of the distance between every corner of a path
+    public bool IsPointOnNavMesh(Vector3 virtualDestination, NavMeshPath outPath)
+    {
+        return controlledAgent.CalculatePath(virtualDestination, outPath);
+    }
+
+    public bool IsPointOnNavMesh()
+    {
+        NavMeshPath path = new NavMeshPath();
+        return controlledAgent.CalculatePath(hitInfo.point, path);
+    }
+
     float GetPathDistance(NavMeshPath path)
     {
         float totalLength = 0;
         List<Vector3> waypoints = new List<Vector3>();
 
-        waypoints.Add(controlledCharacter.transform.position);
+        waypoints.Add(controlledAgent.transform.position);
         foreach (Vector3 v in path.corners)
         {
             waypoints.Add(v);
@@ -99,24 +136,25 @@ public class PathCalculator : MonoBehaviour
 
         }
 
+        //RadiusDrawer.SetLinePoints(waypoints.ToArray());
         return totalLength;
+
     }
 
-    //Method to check if the agent is still or moving, it could be improved using events (but I'm not very confident with these so I used the easy way)
     bool IsCharacterStill()
     {
-        Vector3 characterPosition = controlledCharacter.transform.position;
 
-        if (wasMovingBefore && characterPosition == lastPosition)
+        Vector3 characterPosition = controlledAgent.transform.position;
+
+        if (wasMovingBefore && characterPosition == lastPosition && controlledAgent.velocity.magnitude < 0.1f)
         {
-
-            OnBecomeStill();
             wasMovingBefore = false;
+            OnBecomeStill();
         }
-        else if (!wasMovingBefore && characterPosition != lastPosition)
+        else if (!wasMovingBefore && characterPosition != lastPosition && controlledAgent.velocity.magnitude > 0.1f)
         {
-            OnStartMoving();
             wasMovingBefore = true;
+            OnStartMoving();
         }
 
         bool isStill = lastPosition == characterPosition;
@@ -124,95 +162,76 @@ public class PathCalculator : MonoBehaviour
         lastPosition = characterPosition;
         return isStill;
     }
-
-    //Here happens the magic
-    private void CalculateBoundaries(NavMeshAgent agent, int subdivisions)
+    
+    private void CalculateBoundaries(int subdivisions)
     {
         List<Vector3> waypoints = new List<Vector3>();
-        //position of the target agent
-        Vector3 center = agent.transform.position;
-
-        //possible optimization using the previously created navmeshpath: virtualPath
+        Vector3 center = controlledAgent.transform.position;
         NavMeshPath controlPath = new NavMeshPath();
         Vector3 finalPoint = new Vector3();
+        RaycastHit hit;
 
-        //it will check the path in every point in a circle. For example, using a subdivison of 12 it will check the path every 30 degrees in the radius (360d / 12 = 30d)
         for (int i = 0; i < subdivisions; i++)
         {
             float angle = 360 / subdivisions * i;
 
-            //a point at the edge of agent possible movement
-            finalPoint = center + GetPointOnRadiusCorrected(angle, maxDistance);
-
-            bool isValid = IsPathOnNavMesh(finalPoint, controlPath) && GetPathDistance(controlPath) < maxDistance;
-
-            if (isValid)
+            bool isValid = false;
+            float decrement = 0;
+            do
             {
-                waypoints.Add(finalPoint);
+                finalPoint = center + GetPointOnRadiusCorrected(angle, movementPoints + decrement);
+                Vector3 rayOrigin = finalPoint + Vector3.up * 15;
+                Physics.Raycast(rayOrigin, -Vector3.up, out hit);
+                isValid = IsPointOnNavMesh(hit.point, controlPath) && GetPathDistance(controlPath) < movementPoints;
+                decrement -= pathBoundariesPrecision;
             }
-            else
-            {
-                //This while tries to rebuild the cavity part, there is a big margin of improvement here
-                float cycle = pathBoundariesPrecision;
+            while (!isValid);
+            finalPoint = controlPath.corners.LastOrDefault();
+            waypoints.Add(finalPoint);
 
-                while (!isValid && cycle < maxDistance)
-                {
-                    finalPoint = center + GetPointOnRadiusCorrected(angle, maxDistance - cycle);
-
-                    waypoints.Add(finalPoint);
-
-                    isValid = IsPathOnNavMesh(finalPoint, controlPath) && GetPathDistance(controlPath) < maxDistance;
-                    //if path is not available it keeps recalculating the point until is available, but only if this point doesn't overlapp with the agent
-                    Vector3 nextPoint = center + GetPointOnRadiusCorrected(angle - cycle * 5, maxDistance - cycle);
-
-                    if (!isValid)
-                    {
-                        waypoints.Remove(finalPoint);
-                    }
-
-                    cycle += pathBoundariesPrecision;
-                }
-            }
         }
-
-        //Actual call to render the calculated area
         RadiusDrawer.SetLinePoints(waypoints.ToArray());
     }
 
-    //Convert a degree angle in a Vector2 with magnitude set to 1
-    Vector3 GetRadiusPointFromAngle(float angle)
-    {
-        Vector3 point = new Vector3(Mathf.Sin(Mathf.Deg2Rad * angle), 0, Mathf.Cos(Mathf.Deg2Rad * angle));
-        return point;
-    }
-
-    //Multiplies the maximum distance the agent can reach to the point on a circle with magnitude of 1
     Vector3 GetPointOnRadiusCorrected(float angle, float maxDistance)
-    {
-        Vector3 circlePoint = GetRadiusPointFromAngle(angle);
-        Vector3 finalPoint = (circlePoint * maxDistance) - circlePoint;
-        return finalPoint;
-    }
-
+     {
+         Vector3 circlePoint = new Vector3(Mathf.Sin(Mathf.Deg2Rad * angle), 0, Mathf.Cos(Mathf.Deg2Rad * angle));
+        Vector3 finalPoint = (circlePoint * maxDistance);
+         return finalPoint;
+     }
+     
     void OnStartMoving()
     {
-        //not implemented
-        //follow player
+        CameraManager.TrackTarget(controlledAgent.transform);
     }
 
     void OnBecomeStill()
     {
 
-        if (movementPoints <= 0)
+
+        if (pendingInteraction != null)
         {
-            //not implemented
-            //pass turn
+            ExecuteInteraction();
+        }
+        else
+        {
+            CalculateMovementPoints();
+        }
+        CameraManager.StopTracking();
+
+    }
+
+    internal void CalculateMovementPoints()
+    {
+        if (movementPoints <= 1.5f)
+        {
+            GameManager.CharacterFinishedTurn();
+            movementPoints = 15;
         }
         else
         {
             CalculateBoundaries(radiusSlices);
         }
     }
-
 
 }
